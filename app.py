@@ -354,6 +354,99 @@ def get_robo_html(audio_path, autoplay=True):
     </html>
     """
 
+def show_cool_progress(message, progress_value, subtitle=""):
+    """Display a cool animated progress indicator"""
+    progress_html = f"""
+    <div style="
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 16px;
+        padding: 24px;
+        margin: 16px 0;
+        box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        animation: fadeIn 0.3s ease-in;
+    ">
+        <div style="
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            text-align: center;
+            animation: pulse 2s ease-in-out infinite;
+        ">
+            {message}<span class="dots"></span>
+        </div>
+        {f'''<div style="
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+            margin-bottom: 8px;
+            text-align: center;
+            font-weight: 400;
+        ">
+            {subtitle}
+        </div>''' if subtitle else ''}
+        <div style="
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            height: 12px;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+            margin-top: 16px;
+        ">
+            <div style="
+                background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+                height: 100%;
+                width: {progress_value}%;
+                border-radius: 12px;
+                transition: width 0.5s ease-out;
+                box-shadow: 0 0 20px rgba(79, 172, 254, 0.6);
+                animation: shimmer 2s infinite;
+            "></div>
+        </div>
+        <div style="
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 14px;
+            margin-top: 12px;
+            text-align: center;
+            font-weight: 500;
+        ">
+            {progress_value}% Complete
+        </div>
+    </div>
+    
+    <style>
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(-10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        
+        @keyframes pulse {{
+            0%, 100% {{ opacity: 1; }}
+            50% {{ opacity: 0.7; }}
+        }}
+        
+        @keyframes shimmer {{
+            0% {{ filter: brightness(1); }}
+            50% {{ filter: brightness(1.2); }}
+            100% {{ filter: brightness(1); }}
+        }}
+        
+        .dots::after {{
+            content: '';
+            animation: dots 1.5s steps(4, end) infinite;
+        }}
+        
+        @keyframes dots {{
+            0%, 20% {{ content: ''; }}
+            40% {{ content: '.'; }}
+            60% {{ content: '..'; }}
+            80%, 100% {{ content: '...'; }}
+        }}
+    </style>
+    """
+    return progress_html
+
+
+
 def response_generator(input_msg): 
     for word in input_msg.split(): 
         yield word + " " 
@@ -604,6 +697,10 @@ if 'last_audio_id' not in st.session_state:
     st.session_state.last_audio_id = None
 if 'current_audio_data' not in st.session_state:
     st.session_state.current_audio_data = None
+if 'transcription_ready' not in st.session_state:
+    st.session_state.transcription_ready = False
+if 'user_audio_path' not in st.session_state:
+    st.session_state.user_audio_path = None
 # Initialize thread_id for agent session - generates a new one on each page refresh
 if 'thread_id' not in st.session_state:
     st.session_state.thread_id = str(uuid.uuid4())
@@ -717,16 +814,15 @@ with col_chat:
                 st.session_state.processing = True
                 st.rerun()
 
-    # Process the recording
-    if st.session_state.processing and st.session_state.interview_started and st.session_state.current_audio_data is not None:
-        # Show progress bar and status
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    # Process the recording - Phase 1: Transcription
+    if st.session_state.processing and st.session_state.interview_started and st.session_state.current_audio_data is not None and not st.session_state.transcription_ready:
+        # Show cool progress indicator
+        progress_container = st.empty()
         
         try:
             # Get audio data from session state
-            status_text.text("📥 Loading audio...")
-            progress_bar.progress(10)
+            progress_container.markdown(show_cool_progress("Processing your request", 10, "📥 Loading audio"), unsafe_allow_html=True)
+            time.sleep(0.3)  # Brief pause for visual feedback
             wav_io = io.BytesIO(st.session_state.current_audio_data)
 
             # Read WAV into (sample_rate, numpy_array)
@@ -750,8 +846,7 @@ with col_chat:
                 user_audio_path = fp.name
             
             # Transcribe
-            status_text.text("🎤 Transcribing your response...")
-            progress_bar.progress(25)
+            progress_container.markdown(show_cool_progress("Processing your request", 50, "🎤 Transcribing your response"), unsafe_allow_html=True)
             transcription = transcribe_audio(audio_np, fs)
             
             # Add user message to history
@@ -761,47 +856,86 @@ with col_chat:
                 "audio_path": user_audio_path
             })
             
-            # Get agent response and generate TTS
-            status_text.text("🤖 Generating AI response...")
-            progress_bar.progress(60)
-            config = {"configurable": {"thread_id": st.session_state.thread_id}}
-            agent_response, control_decision = process_with_agent(transcription, config)
+            # Mark transcription as ready and store audio path
+            st.session_state.transcription_ready = True
+            st.session_state.user_audio_path = user_audio_path
             
-            # Generate TTS for agent response (keep same status message)
-            progress_bar.progress(80)
-            tts_audio_path = text_to_speech(agent_response)
+            # Complete transcription phase
+            progress_container.markdown(show_cool_progress("Processing your request", 100, "✅ Transcription complete"), unsafe_allow_html=True)
+            time.sleep(0.5)  # Brief pause to show completion
             
-            # Complete
-            progress_bar.progress(100)
-            status_text.text("✅ Complete!")
+            # Clear progress indicator
+            progress_container.empty()
             
-            # Add assistant message to history
-            st.session_state.conversation_history.append({
-                "role": "assistant",
-                "content": agent_response,
-                "audio_path": tts_audio_path
-            })
-            
-            # Set latest audio for the robot
-            st.session_state.latest_audio_path = tts_audio_path
-            
-            # Check control decision and update interview state
-            if control_decision == "stop":
-                st.session_state.interview_active = False
-            
-            # Reset processing flag and clear audio data
-            st.session_state.processing = False
-            st.session_state.current_audio_data = None
-            
-            # Clear progress indicators
-            progress_bar.empty()
-            status_text.empty()
+            # Rerun to display the transcribed message immediately
             st.rerun()
             
         except Exception as e:
-            st.error(f"Error processing: {e}")
+            st.error(f"Error during transcription: {str(e)}")
             st.session_state.processing = False
             st.session_state.current_audio_data = None
-            st.session_state.last_audio_id = None  # Reset so user can try again
-            progress_bar.empty()
-            status_text.empty()
+            st.session_state.transcription_ready = False
+    
+    # Process the recording - Phase 2: AI Response Generation
+    if st.session_state.processing and st.session_state.interview_started and st.session_state.transcription_ready:
+        # Show cool progress indicator
+        progress_container = st.empty()
+        
+        try:
+            # Get the last user message (the transcription we just added)
+            last_user_message = None
+            for msg in reversed(st.session_state.conversation_history):
+                if msg["role"] == "user":
+                    last_user_message = msg["content"]
+                    break
+            
+            if last_user_message:
+                # Show initial progress
+                progress_container.markdown(show_cool_progress("Processing your request", 30, "🤖 Generating AI response"), unsafe_allow_html=True)
+                
+                # Get agent response
+                config = {"configurable": {"thread_id": st.session_state.thread_id}}
+                agent_response, control_decision = process_with_agent(last_user_message, config)
+                
+                # Update progress while generating TTS
+                progress_container.markdown(show_cool_progress("Processing your request", 70, "🤖 Generating AI response"), unsafe_allow_html=True)
+                tts_audio_path = text_to_speech(agent_response)
+                
+                # Complete
+                progress_container.markdown(show_cool_progress("Processing your request", 100, "✅ All done"), unsafe_allow_html=True)
+                time.sleep(0.5)  # Brief pause to show completion
+                
+                # Add assistant message to history
+                st.session_state.conversation_history.append({
+                    "role": "assistant",
+                    "content": agent_response,
+                    "audio_path": tts_audio_path
+                })
+                
+                # Set latest audio for the robot
+                st.session_state.latest_audio_path = tts_audio_path
+                
+                # Check control decision and update interview state
+                if control_decision == "stop":
+                    st.session_state.interview_active = False
+            
+            # Reset all processing flags and clear audio data
+            st.session_state.processing = False
+            st.session_state.current_audio_data = None
+            st.session_state.transcription_ready = False
+            st.session_state.user_audio_path = None
+            
+            # Clear progress indicator
+            progress_container.empty()
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Error during AI response generation: {str(e)}")
+            st.session_state.processing = False
+            st.session_state.current_audio_data = None
+            st.session_state.transcription_ready = False
+            st.session_state.user_audio_path = None
+
+
+
+
