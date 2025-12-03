@@ -1,0 +1,10 @@
+streamlit
+numpy
+scipy
+openai
+langgraph
+langchain-core
+langchain-openai
+reportlab
+pillow
+python-dotenv
